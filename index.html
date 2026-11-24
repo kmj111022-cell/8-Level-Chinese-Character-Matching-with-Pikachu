@@ -617,3 +617,642 @@
 
       if (customImages.pikachu === DEFAULT_REPO_IMAGES.pikachu) {
         const dbPika = await getImageFromDB("pikachu");
+        if (dbPika) { customImages.pikachu = dbPika; hasUserCustom = true; }
+      }
+      if (customImages.darkrai === DEFAULT_REPO_IMAGES.darkrai) {
+        const dbDark = await getImageFromDB("darkrai");
+        if (dbDark) { customImages.darkrai = dbDark; hasUserCustom = true; }
+      }
+
+      updateSavedImagesUI(hasUserCustom);
+      const titleArt = document.getElementById("title-pikachu-art");
+      if (titleArt) titleArt.innerHTML = getPikachuHTML("normal");
+    }
+
+    function updateSavedImagesUI(isUserOverridden = false) {
+      const btn = document.getElementById("btn-reset-images");
+      const statusBar = document.getElementById("saved-images-status");
+      const pikaWrap = document.getElementById("status-pikachu-wrap");
+      const darkWrap = document.getElementById("status-darkrai-wrap");
+      const thumbPika = document.getElementById("thumb-pikachu");
+      const thumbDark = document.getElementById("thumb-darkrai");
+
+      if (btn) btn.classList.toggle("hidden", !isUserOverridden);
+      if (statusBar) statusBar.classList.remove("hidden");
+
+      if (pikaWrap && thumbPika && customImages.pikachu) {
+        thumbPika.src = encodeURI(customImages.pikachu);
+        pikaWrap.classList.remove("hidden");
+        pikaWrap.classList.add("flex");
+      }
+
+      if (darkWrap && thumbDark && customImages.darkrai) {
+        thumbDark.src = encodeURI(customImages.darkrai);
+        darkWrap.classList.remove("hidden");
+        darkWrap.classList.add("flex");
+      }
+    }
+
+    function handleImageUpload(event, character) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const img = new Image();
+        img.onload = async function () {
+          const maxDim = 480;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+
+          try {
+            const imgData = ctx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+            const r0 = data[0], g0 = data[1], b0 = data[2], a0 = data[3];
+            const isWhiteBg = a0 > 240 && r0 > 235 && g0 > 235 && b0 > 235;
+            const isBlackBg = a0 > 240 && r0 < 25 && g0 < 25 && b0 < 25;
+
+            if (isWhiteBg || isBlackBg) {
+              const visited = new Uint8Array(w * h);
+              const queue = [0, w - 1, (h - 1) * w, h * w - 1];
+              const matchBg = (idx) => {
+                const p = idx * 4;
+                if (isWhiteBg) return data[p] > 225 && data[p + 1] > 225 && data[p + 2] > 225;
+                return data[p] < 32 && data[p + 1] < 32 && data[p + 2] < 32;
+              };
+
+              let head = 0;
+              while (head < queue.length) {
+                const idx = queue[head++];
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+                if (!matchBg(idx)) continue;
+
+                data[idx * 4 + 3] = 0;
+                const x = idx % w;
+                const y = (idx - x) / w;
+                if (x > 0 && !visited[idx - 1]) queue.push(idx - 1);
+                if (x < w - 1 && !visited[idx + 1]) queue.push(idx + 1);
+                if (y > 0 && !visited[idx - w]) queue.push(idx - w);
+                if (y < h - 1 && !visited[idx + w]) queue.push(idx + w);
+              }
+              ctx.putImageData(imgData, 0, 0);
+            }
+          } catch (err) {}
+
+          const dataUrl = canvas.toDataURL("image/png");
+          customImages[character] = dataUrl;
+          await saveImageToDB(character, dataUrl);
+
+          updateSavedImagesUI(true);
+          document.getElementById("title-pikachu-art").innerHTML = getPikachuHTML("normal");
+          showToast(
+            character === "pikachu"
+              ? "피카츄 사진이 변경되었습니다!"
+              : "다크라이 사진이 변경되었습니다!"
+          );
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+      event.target.value = "";
+    }
+
+    async function resetCustomImages() {
+      customImages.pikachu = DEFAULT_REPO_IMAGES.pikachu;
+      customImages.darkrai = DEFAULT_REPO_IMAGES.darkrai;
+      await clearImagesFromDB();
+      updateSavedImagesUI(false);
+      document.getElementById("title-pikachu-art").innerHTML = getPikachuHTML("normal");
+      showToast("저장소의 기본 사진으로 복구되었습니다.");
+    }
+
+    function getPikachuHTML(mood = "normal") {
+      const isCharging = mood === "charging";
+      const isShocked = mood === "shocked";
+      const isHappy = mood === "happy";
+
+      const imgFilter = isCharging
+        ? "drop-shadow(0 0 18px rgba(250, 204, 21, 0.95)) brightness(1.08)"
+        : isShocked
+        ? "drop-shadow(0 0 14px rgba(244, 63, 94, 0.85))"
+        : isHappy
+        ? "drop-shadow(0 0 18px rgba(250, 204, 21, 0.9))"
+        : "drop-shadow(0 8px 14px rgba(0, 0, 0, 0.45))";
+
+      const overlayBadge = isCharging
+        ? `<div class="absolute -top-2 -right-2 text-3xl anim-spark">⚡</div>
+           <div class="absolute -bottom-1 -left-2 text-3xl anim-spark">⚡</div>`
+        : isShocked
+        ? `<div class="absolute -top-2 -right-2 bg-rose-500 text-white font-game text-xl w-9 h-9 rounded-full flex items-center justify-center shadow-lg border-2 border-white">!</div>
+           <div class="absolute top-2 -left-2 text-2xl">💦</div>`
+        : isHappy
+        ? `<div class="absolute -top-2 -right-2 text-3xl anim-spark">🎉</div>
+           <div class="absolute -top-2 -left-2 text-3xl anim-spark">✨</div>`
+        : "";
+
+      const imgSrc = customImages.pikachu.startsWith("data:")
+        ? customImages.pikachu
+        : encodeURI(customImages.pikachu);
+
+      return `
+        <div class="relative w-full h-full flex items-center justify-center">
+          <img src="${imgSrc}" alt="피카츄"
+               class="w-full h-full object-contain rounded-2xl select-none pointer-events-none"
+               style="filter: ${imgFilter};" />
+          ${overlayBadge}
+        </div>
+      `;
+    }
+
+    function getDarkraiHTML() {
+      const imgSrc = customImages.darkrai.startsWith("data:")
+        ? customImages.darkrai
+        : encodeURI(customImages.darkrai);
+
+      return `
+        <div class="relative w-full h-full flex items-center justify-center">
+          <img src="${imgSrc}" alt="다크라이"
+               class="w-full h-full object-contain rounded-2xl select-none pointer-events-none"
+               style="filter: drop-shadow(0 0 22px rgba(168, 85, 247, 0.85));" />
+        </div>
+      `;
+    }
+
+    /**
+     * 3. Web Audio API 합성 효과음 엔진
+     */
+    let audioCtx = null;
+    let soundEnabled = true;
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) audioCtx = new AudioContext();
+      }
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      document.getElementById("sound-icon").textContent = soundEnabled ? "🔊" : "🔇";
+      document.getElementById("sound-label").textContent = soundEnabled ? "효과음 ON" : "효과음 OFF";
+      if (soundEnabled) {
+        initAudio();
+        playTone(660, "sine", 0.08, 0.15);
+      }
+    }
+
+    function playTone(freq, type = "sine", duration = 0.15, volume = 0.2, delay = 0) {
+      if (!soundEnabled) return;
+      try {
+        initAudio();
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + delay);
+
+        gain.gain.setValueAtTime(volume, audioCtx.currentTime + delay);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + delay + duration);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(audioCtx.currentTime + delay);
+        osc.stop(audioCtx.currentTime + delay + duration);
+      } catch (e) {}
+    }
+
+    function playSoundEffect(type) {
+      if (!soundEnabled) return;
+      if (type === "tick") {
+        playTone(880, "triangle", 0.06, 0.08);
+      } else if (type === "charge") {
+        playTone(523.25, "triangle", 0.12, 0.2, 0);
+        playTone(659.25, "triangle", 0.12, 0.2, 0.08);
+        playTone(783.99, "triangle", 0.15, 0.22, 0.16);
+        playTone(1046.5, "sine", 0.28, 0.25, 0.24);
+      } else if (type === "shock") {
+        playTone(310, "sawtooth", 0.18, 0.18, 0);
+        playTone(220, "sawtooth", 0.32, 0.2, 0.14);
+      } else if (type === "thunderbolt") {
+        for (let i = 0; i < 8; i++) {
+          playTone(180 + Math.random() * 900, "sawtooth", 0.14, 0.25, i * 0.06);
+        }
+        playTone(110, "square", 0.5, 0.3, 0.2);
+      } else if (type === "victory") {
+        const notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
+        const times = [0, 0.12, 0.24, 0.36, 0.52, 0.66];
+        notes.forEach((n, idx) => playTone(n, "triangle", 0.22, 0.25, times[idx]));
+      }
+    }
+
+    /**
+     * 4. 게임 상태 관리 변수
+     */
+    const QUESTION_TIME_LIMIT = 5.0;
+    let energy = 0;
+    let questionCount = 0;
+    let correctCount = 0;
+    let currentQuestion = null;
+    let usedIndices = [];
+    let timerInterval = null;
+    let timeRemaining = QUESTION_TIME_LIMIT;
+    let isAnswered = false;
+    let lastTickSecond = 5;
+
+    /**
+     * 5. 화면 전환 유틸리티
+     */
+    function showScreen(screenId) {
+      const screens = ["screen-title", "screen-quiz", "screen-answer", "screen-boss", "screen-victory"];
+      screens.forEach(id => {
+        const el = document.getElementById(id);
+        if (id === screenId) {
+          el.classList.remove("hidden");
+        } else {
+          el.classList.add("hidden");
+        }
+      });
+
+      if (screenId === "screen-victory") {
+        document.body.classList.add("victory-bg");
+      } else {
+        document.body.classList.remove("victory-bg");
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById("toast-box");
+      document.getElementById("toast-text").textContent = message;
+      toast.classList.remove("opacity-0");
+      setTimeout(() => {
+        toast.classList.add("opacity-0");
+      }, 2800);
+    }
+
+    /**
+     * 6. 게임 시작 및 문제 출제 로직
+     */
+    function startGame() {
+      initAudio();
+      energy = 0;
+      questionCount = 0;
+      correctCount = 0;
+      usedIndices = [];
+      playSoundEffect("charge");
+      nextQuestion();
+    }
+
+    function resetGame() {
+      clearTimer();
+      document.getElementById("title-pikachu-art").innerHTML = getPikachuHTML("normal");
+      showScreen("screen-title");
+    }
+
+    function nextQuestion() {
+      isAnswered = false;
+      questionCount++;
+
+      if (usedIndices.length >= HANJA_8_GRADE.length) {
+        usedIndices = [];
+      }
+
+      let idx;
+      do {
+        idx = Math.floor(Math.random() * HANJA_8_GRADE.length);
+      } while (usedIndices.includes(idx));
+      usedIndices.push(idx);
+
+      currentQuestion = HANJA_8_GRADE[idx];
+
+      const distractors = [];
+      while (distractors.length < 3) {
+        const randItem = HANJA_8_GRADE[Math.floor(Math.random() * HANJA_8_GRADE.length)];
+        if (randItem.meaning !== currentQuestion.meaning && !distractors.some(d => d.meaning === randItem.meaning)) {
+          distractors.push(randItem);
+        }
+      }
+
+      const choices = [currentQuestion, ...distractors].sort(() => Math.random() - 0.5);
+
+      document.getElementById("question-number-badge").textContent = `문제 ${questionCount} (8급 한자)`;
+      document.getElementById("hanja-char").textContent = currentQuestion.char;
+      updateEnergyUI("quiz");
+
+      const grid = document.getElementById("choices-grid");
+      grid.innerHTML = "";
+      const labels = ["①", "②", "③", "④"];
+
+      choices.forEach((choice, i) => {
+        const btn = document.createElement("button");
+        btn.className = "btn-arcade bg-slate-800 hover:bg-indigo-700/90 active:bg-indigo-600 text-white border-2 border-slate-600 hover:border-yellow-400 rounded-2xl p-4 sm:p-5 font-game text-xl sm:text-2xl shadow-lg flex items-center justify-center gap-2.5 cursor-pointer";
+        btn.innerHTML = `<span class="text-yellow-400 text-lg sm:text-xl">${labels[i]}</span> <span>${choice.meaning}</span>`;
+        btn.onclick = () => selectAnswer(choice.meaning === currentQuestion.meaning, false);
+        grid.appendChild(btn);
+      });
+
+      showScreen("screen-quiz");
+      startQuestionTimer();
+    }
+
+    /**
+     * 7. 5초 제한시간 타이머 로직
+     */
+    function startQuestionTimer() {
+      clearTimer();
+      timeRemaining = QUESTION_TIME_LIMIT;
+      lastTickSecond = 5;
+      updateTimerDisplay();
+
+      const startTime = performance.now();
+      timerInterval = setInterval(() => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        timeRemaining = Math.max(0, QUESTION_TIME_LIMIT - elapsed);
+        updateTimerDisplay();
+
+        const currentSec = Math.ceil(timeRemaining);
+        if (currentSec < lastTickSecond && currentSec > 0) {
+          lastTickSecond = currentSec;
+          playSoundEffect("tick");
+        }
+
+        if (timeRemaining <= 0) {
+          clearTimer();
+          if (!isAnswered) {
+            selectAnswer(false, true);
+          }
+        }
+      }, 40);
+    }
+
+    function clearTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    function updateTimerDisplay() {
+      const timerText = document.getElementById("timer-text");
+      const timerBar = document.getElementById("timer-bar");
+      const pct = (timeRemaining / QUESTION_TIME_LIMIT) * 100;
+
+      timerText.textContent = `${timeRemaining.toFixed(1)}초`;
+      timerBar.style.width = `${pct}%`;
+
+      if (timeRemaining <= 2.0) {
+        timerText.className = "font-game text-xl text-rose-400 animate-pulse";
+        timerBar.className = "h-full bg-gradient-to-r from-rose-600 to-red-400 rounded-full transition-all duration-75";
+      } else if (timeRemaining <= 3.5) {
+        timerText.className = "font-game text-xl text-amber-300";
+        timerBar.className = "h-full bg-gradient-to-r from-amber-500 to-yellow-300 rounded-full transition-all duration-75";
+      } else {
+        timerText.className = "font-game text-xl text-emerald-400";
+        timerBar.className = "h-full bg-gradient-to-r from-emerald-400 to-lime-300 rounded-full transition-all duration-75";
+      }
+    }
+
+    /**
+     * 8. 정답 / 오답 / 시간초과 판정 및 답 화면 출력
+     */
+    function selectAnswer(isCorrect, isTimeout) {
+      if (isAnswered) return;
+      isAnswered = true;
+      clearTimer();
+
+      const banner = document.getElementById("answer-result-banner");
+      const pikachuArt = document.getElementById("answer-pikachu-art");
+      const glow = document.getElementById("answer-glow");
+      const speechBox = document.getElementById("pikachu-speech-box");
+      const speechText = document.getElementById("pikachu-speech-text");
+      const deltaBadge = document.getElementById("answer-delta-badge");
+      const nextBtn = document.getElementById("btn-next-step");
+
+      if (isCorrect) {
+        correctCount++;
+        energy = Math.min(100, energy + 10);
+        playSoundEffect("charge");
+
+        banner.textContent = "정답이야! 삐까삐까! ⚡";
+        banner.className = "font-game text-2xl sm:text-4xl mb-2 text-yellow-300";
+
+        pikachuArt.innerHTML = getPikachuHTML("charging");
+        pikachuArt.className = "w-full h-full anim-happy flex items-center justify-center";
+        glow.className = "absolute inset-2 bg-yellow-400/40 rounded-full blur-2xl animate-pulse";
+
+        speechBox.className = "bg-slate-950/90 border-2 border-yellow-400 rounded-2xl p-4 sm:p-5 mb-5 shadow-[0_0_20px_rgba(250,204,21,0.25)]";
+        speechText.className = "font-game text-lg sm:text-2xl text-yellow-200 leading-snug";
+        speechText.innerHTML = `"전기를 충전해 주어서 고마워!<br/>정말 대단해! 피카츄~!"`;
+
+        deltaBadge.textContent = "+10% 충전!";
+        deltaBadge.className = "font-game text-sm px-2.5 py-0.5 rounded-full bg-emerald-500/25 text-emerald-300 border border-emerald-400/50";
+      } else {
+        energy = Math.max(0, energy - 5);
+        playSoundEffect("shock");
+
+        banner.textContent = isTimeout ? "앗! 5초가 지났어! ⏰" : "삐까?! 아쉽다, 오답이야! 😱";
+        banner.className = "font-game text-2xl sm:text-4xl mb-2 text-rose-400";
+
+        pikachuArt.innerHTML = getPikachuHTML("shocked");
+        pikachuArt.className = "w-full h-full anim-shock flex items-center justify-center";
+        glow.className = "absolute inset-2 bg-rose-500/25 rounded-full blur-2xl";
+
+        speechBox.className = "bg-slate-950/90 border-2 border-rose-400/70 rounded-2xl p-4 sm:p-5 mb-5 shadow-lg";
+        speechText.className = "font-game text-lg sm:text-2xl text-rose-200 leading-snug";
+        speechText.innerHTML = `"삐까악?! 깜짝 놀랐잖아!<br/>정답은 <span class='text-yellow-300 underline'>${currentQuestion.char} (${currentQuestion.meaning})</span> 이야!"`;
+
+        deltaBadge.textContent = "-5% 감소";
+        deltaBadge.className = "font-game text-sm px-2.5 py-0.5 rounded-full bg-rose-500/25 text-rose-300 border border-rose-400/50";
+      }
+
+      document.getElementById("answer-hanja-char").textContent = currentQuestion.char;
+      document.getElementById("answer-hanja-meaning").textContent = currentQuestion.meaning;
+      document.getElementById("answer-hanja-desc").textContent = currentQuestion.desc;
+
+      updateEnergyUI("answer");
+
+      if (energy >= 100) {
+        nextBtn.innerHTML = "⚡ 에너지 100% 달성! 다크라이 보스전 돌입! ⚡";
+        nextBtn.className = "btn-arcade w-full bg-gradient-to-r from-purple-600 via-fuchsia-600 to-rose-600 text-white font-game text-xl sm:text-2xl py-4 px-6 rounded-2xl border-b-4 border-purple-950 shadow-[0_0_25px_rgba(192,38,211,0.6)] animate-pulse cursor-pointer";
+      } else {
+        nextBtn.innerHTML = "다음 문제 도전하기 ➡️";
+        nextBtn.className = "btn-arcade w-full bg-gradient-to-r from-sky-400 to-blue-600 text-white font-game text-xl sm:text-2xl py-4 px-6 rounded-2xl border-b-4 border-blue-800 shadow-lg cursor-pointer";
+      }
+
+      showScreen("screen-answer");
+    }
+
+    function updateEnergyUI(prefix) {
+      const textEl = document.getElementById(`${prefix}-energy-text`);
+      const barEl = document.getElementById(`${prefix}-energy-bar`);
+      if (textEl) textEl.textContent = prefix === "quiz" ? `${energy}% / 100%` : `${energy}%`;
+      if (barEl) barEl.style.width = `${energy}%`;
+    }
+
+    function handleNextStep() {
+      if (energy >= 100) {
+        enterDarkraiBossBattle();
+      } else {
+        nextQuestion();
+      }
+    }
+
+    /**
+     * 9. 다크라이 보스전 진입 및 원킬 공격 로직
+     */
+    function enterDarkraiBossBattle() {
+      document.getElementById("boss-pikachu-art").innerHTML = getPikachuHTML("charging");
+      const darkraiArt = document.getElementById("boss-darkrai-art");
+      darkraiArt.innerHTML = getDarkraiHTML();
+      darkraiArt.className = "w-full h-36 sm:h-44 anim-darkrai flex items-center justify-center";
+
+      document.getElementById("darkrai-hp-badge").textContent = "다크라이 HP 100%";
+      document.getElementById("darkrai-hp-text").textContent = "HP 100 / 100";
+      document.getElementById("darkrai-hp-bar").style.width = "100%";
+      document.getElementById("thunderbolt-beam").classList.add("hidden");
+
+      const attackBtn = document.getElementById("btn-boss-attack");
+      attackBtn.disabled = false;
+      attackBtn.classList.remove("opacity-50");
+
+      showScreen("screen-boss");
+    }
+
+    function attackDarkrai() {
+      const attackBtn = document.getElementById("btn-boss-attack");
+      attackBtn.disabled = true;
+      attackBtn.classList.add("opacity-50");
+
+      playSoundEffect("thunderbolt");
+
+      const flash = document.getElementById("flash-screen");
+      flash.style.animation = "none";
+      void flash.offsetWidth;
+      flash.style.animation = "flashOverlay 0.7s ease-out forwards";
+
+      const container = document.getElementById("game-container");
+      container.classList.add("anim-screen-shake");
+      setTimeout(() => container.classList.remove("anim-screen-shake"), 700);
+
+      const beam = document.getElementById("thunderbolt-beam");
+      beam.classList.remove("hidden");
+      beam.style.animation = "thunderStrike 0.9s ease-out forwards";
+
+      setTimeout(() => {
+        const darkraiArt = document.getElementById("boss-darkrai-art");
+        darkraiArt.className = "w-full h-36 sm:h-44 anim-darkrai-defeat flex items-center justify-center";
+        document.getElementById("darkrai-hp-badge").textContent = "다크라이 HP 0% (격파!)";
+        document.getElementById("darkrai-hp-text").textContent = "HP 0 / 100";
+        document.getElementById("darkrai-hp-bar").style.width = "0%";
+        document.getElementById("boss-instruction").textContent = "크아악! 강력한 백만볼트 한 방에 다크라이가 쓰러졌습니다!";
+      }, 250);
+
+      setTimeout(() => {
+        showVictoryScreen();
+      }, 1750);
+    }
+
+    /**
+     * 10. 승리 및 악몽 탈출 화면
+     */
+    function showVictoryScreen() {
+      playSoundEffect("victory");
+      document.getElementById("victory-pikachu-art").innerHTML = getPikachuHTML("happy");
+      document.getElementById("stat-correct").textContent = `${correctCount}문제`;
+      spawnVictoryConfetti();
+      showScreen("screen-victory");
+    }
+
+    function spawnVictoryConfetti() {
+      const container = document.getElementById("victory-confetti");
+      if (!container) return;
+      container.innerHTML = "";
+      const colors = ["#facc15", "#38bdf8", "#f43f5e", "#34d399", "#a855f7", "#fb923c"];
+      for (let i = 0; i < 28; i++) {
+        const piece = document.createElement("span");
+        const size = 8 + Math.random() * 8;
+        piece.style.position = "absolute";
+        piece.style.left = `${Math.random() * 100}%`;
+        piece.style.top = `${-10 - Math.random() * 40}px`;
+        piece.style.width = `${size}px`;
+        piece.style.height = `${size * 0.6}px`;
+        piece.style.backgroundColor = colors[i % colors.length];
+        piece.style.borderRadius = "2px";
+        piece.style.animation = `confettiFall ${1.8 + Math.random() * 1.6}s linear ${Math.random() * 0.8}s infinite`;
+        container.appendChild(piece);
+      }
+    }
+
+    /**
+     * 11. 현재 게임을 독립 실행형 HTML 파일로 다운로드하는 기능
+     */
+    function downloadGameHTML() {
+      try {
+        const cloneDoc = document.documentElement.cloneNode(true);
+        const screenIds = ["screen-title", "screen-quiz", "screen-answer", "screen-boss", "screen-victory"];
+        screenIds.forEach(id => {
+          const sec = cloneDoc.querySelector(`#${id}`);
+          if (sec) {
+            if (id === "screen-title") sec.classList.remove("hidden");
+            else sec.classList.add("hidden");
+          }
+        });
+        const bodyEl = cloneDoc.querySelector("body");
+        if (bodyEl) bodyEl.classList.remove("victory-bg");
+
+        const titleArt = cloneDoc.querySelector("#title-pikachu-art");
+        if (titleArt) {
+          titleArt.innerHTML = getPikachuHTML("normal");
+        }
+
+        let fullHTML = "<!DOCTYPE html>\n" + cloneDoc.outerHTML;
+        const embeddedObj = JSON.stringify(customImages);
+        fullHTML = fullHTML.replace(
+          /let customImages = \{[\s\S]*?\};/,
+          `let customImages = ${embeddedObj};`
+        );
+
+        const blob = new Blob([fullHTML], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "피카츄_8급한자_게임.html";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showToast("게임이 '피카츄_8급한자_게임.html'로 다운로드되었습니다!");
+      } catch (err) {
+        showToast("다운로드 중 오류가 발생했습니다.");
+      }
+    }
+
+    // 페이지 로드 시 저장소의 피카츄·다크라이 사진 즉시 렌더링
+    window.addEventListener("DOMContentLoaded", async () => {
+      document.getElementById("title-pikachu-art").innerHTML = getPikachuHTML("normal");
+      await loadSavedImages();
+    });
+  </script>
+</body>
+</html>
